@@ -16,6 +16,7 @@ Needs Python 3.9+ and the `markdown` package (pip install markdown).
 """
 import html
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -29,6 +30,18 @@ except ImportError:
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 CONFIG = json.loads((HERE / "site.json").read_text())
+# The hosted site serves the playground beside it; other copies of the page
+# (for example one published elsewhere on its own) can point at another URL.
+if os.environ.get("SITE_PLAYGROUND_URL"):
+    CONFIG["playground_url"] = os.environ["SITE_PLAYGROUND_URL"]
+
+
+def external_link(url, label, cls=None):
+    """A link with an arrow when it leaves the site."""
+    attr = f' class="{cls}"' if cls else ""
+    if re.match(r"^[a-z]+://", url):
+        return f'<a{attr} href="{url}" rel="noopener">{label} <span aria-hidden="true">↗</span></a>'
+    return f'<a{attr} href="{url}">{label}</a>'
 
 KEYWORDS = (
     "if|then|else|for|loop|break|return|var|set|class|struct|enum|interface|module|using|"
@@ -166,7 +179,7 @@ def build_home():
             actions.append(f'<a class="{cls}" href="#{a["page"]}">{html.escape(a["label"])}</a>')
         elif CONFIG.get(a["url"] + "_url"):
             url = CONFIG[a["url"] + "_url"]
-            actions.append(f'<a class="{cls}" href="{url}" rel="noopener">{html.escape(a["label"])} <span aria-hidden="true">↗</span></a>')
+            actions.append(external_link(url, html.escape(a["label"]), cls))
     stanza = "".join(
         f'<span class="line"><span class="no" aria-hidden="true">{i + 1}</span>{html.escape(l)}</span>'
         for i, l in enumerate(lines)
@@ -211,7 +224,7 @@ def build():
     nav = ['<a href="#home" data-page="home">Home</a>']
     nav += [f'<a href="#{p["slug"]}" data-page="{p["slug"]}">{html.escape(p["nav"])}</a>' for p in CONFIG["pages"]]
     if CONFIG.get("playground_url"):
-        nav.append(f'<a href="{CONFIG["playground_url"]}" rel="noopener">Playground <span aria-hidden="true">↗</span></a>')
+        nav.append(external_link(CONFIG["playground_url"], "Playground"))
     pages = build_home() + "".join(build_page(p) for p in CONFIG["pages"])
     out = (
         template.replace("{{title}}", html.escape(CONFIG["title"]))

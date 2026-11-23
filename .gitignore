@@ -2,3 +2,4 @@ target/
 *.digest.verse
 playground/dist/
 site/dist/
+dist/

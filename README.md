@@ -195,6 +195,14 @@ and the stress cases through the WebAssembly build.
 file with no dependencies at run time. `python3 scripts/gen-docs.py` refreshes the
 generated reference sections first.
 
+## Website
+
+The website is the documentation site with the playground at `/playground/`.
+`scripts/vercel-build.sh` builds both into `dist/`; it installs Rust and Python Markdown
+when they are missing, so it runs unchanged on Vercel. `vercel.json` points Vercel at it.
+With the repository imported into Vercel, every push to `main` deploys to production and
+every other branch gets a preview.
+
 ## Sources and clean-room policy
 
 This implementation is written only from public documentation:
