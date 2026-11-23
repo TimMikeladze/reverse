@@ -4,6 +4,7 @@
 #   dist/index.html              landing page and documentation (site/build.py)
 #   dist/playground/index.html   the browser playground
 #   dist/playground/reverse.wasm the toolchain compiled to WebAssembly
+#   dist/observatory/            the Bevy world and its Verse editor
 #
 # Vercel runs this on every push (see vercel.json); pushes to main go to
 # production. It also works locally: scripts/vercel-build.sh && open dist/index.html
@@ -32,10 +33,37 @@ if ! python3 -c "import markdown" 2>/dev/null; then
 fi
 
 scripts/build-wasm.sh
+
+world=examples/bevy-world
+bindgen_version=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/"/, "", $3); print $3; exit }' "$world/Cargo.lock")
+bindgen_cli=${WASM_BINDGEN:-wasm-bindgen}
+if [ "$("$bindgen_cli" --version 2>/dev/null || true)" != "wasm-bindgen $bindgen_version" ]; then
+    tools="$PWD/$world/target/browser-tools/$bindgen_version"
+    bindgen_cli="$tools/wasm-bindgen"
+    if [ ! -x "$bindgen_cli" ]; then
+        mkdir -p "$tools"
+        case "$(uname -sm)" in
+            "Linux x86_64") platform=x86_64-unknown-linux-musl ;;
+            "Darwin arm64") platform=aarch64-apple-darwin ;;
+            "Darwin x86_64") platform=x86_64-apple-darwin ;;
+            *) platform= ;;
+        esac
+        if [ -n "$platform" ]; then
+            release="https://github.com/wasm-bindgen/wasm-bindgen/releases/download/$bindgen_version"
+            curl -fsSL "$release/wasm-bindgen-$bindgen_version-$platform.tar.gz" |
+                tar -xz -C "$tools" --strip-components=1 wasm-bindgen-"$bindgen_version"-"$platform"/wasm-bindgen
+        else
+            cargo install --locked --version "$bindgen_version" --root "$tools" wasm-bindgen-cli
+            bindgen_cli="$tools/bin/wasm-bindgen"
+        fi
+    fi
+fi
+WASM_BINDGEN="$bindgen_cli" bash "$world/build-browser.sh"
 python3 site/build.py
 
 rm -rf dist
-mkdir -p dist/playground
+mkdir -p dist/playground dist/observatory
 cp site/dist/index.html dist/index.html
 cp playground/dist/index.html playground/dist/reverse.wasm dist/playground/
-ls -la dist dist/playground
+cp -R "$world/target/browser-dist/." dist/observatory/
+ls -la dist dist/playground dist/observatory

@@ -1,0 +1,22 @@
+[package]
+name = "reverse-bevy"
+description = "Run Verse gameplay in Bevy with the Reverse runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bevy_app = "0.20.1"
+bevy_asset = "0.20.1"
+bevy_ecs = "0.20.1"
+bevy_reflect = "0.20.1"
+bevy_time = "0.20.1"
+reverse-check = { path = "../check" }
+reverse-syntax = { path = "../syntax" }
+reverse-vm = { path = "../vm" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+file_watcher = ["bevy_asset/file_watcher"]

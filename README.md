@@ -35,6 +35,8 @@ error[V3002]: `Half` is `<decides>`, so it must be called with square brackets
   assertions.
 - **Stand-ins for Fortnite devices.** Buttons, triggers, timers, score managers and more
   can be pressed, started and inspected from a test, without UEFN.
+- **Gameplay in Bevy.** Attach a Verse asset to an entity, route Bevy messages to it,
+  and read or change registered components on the fixed clock. [Bevy setup](docs/bevy-integration.md)
 - **Tools for AI agents.** An MCP server, a guide and a skill let a model write Verse,
   check it and fix its own mistakes before a person sees the code.
 - **A browser playground.** The whole toolchain compiles to WebAssembly.
@@ -52,12 +54,13 @@ and a run test, and the same tests pass in the WebAssembly build.
 | Overloaded functions and methods, extension methods, parametric functions, constructor functions, `defer`, `rational` arithmetic | Loading UEFN digest files (APIs beyond the stand-ins are not checked) |
 | 62 diagnostic codes, each with help text and a longer explanation; many carry a machine-applicable fix | Persistence, `weak_map`, live variables |
 | Interpreter: failure as a value, transactional rollback of `var` and field writes, classes, value-type containers | Bytecode VM (the interpreter walks the syntax tree) |
-| Concurrency on a simulated clock: `<suspends>`, `Sleep`, `sync`, `race`, `rush`, `branch`, `spawn`, tasks, events with `Await` and `Subscribe`, cancellation, deadlock detection | Language server, Bevy plugin |
+| Concurrency on a simulated clock: `<suspends>`, `Sleep`, `sync`, `race`, `rush`, `branch`, `spawn`, tasks, events with `Await` and `Subscribe`, cancellation, deadlock detection | Language server |
+| Bevy 0.20 plugin: `.verse` assets, fixed-tick execution, typed ECS bindings, headless tests | Cross-entity Verse bindings |
 | Stand-ins for 16 Fortnite device types plus players, characters and the playspace, with test helpers | Transforms, teams, UI widgets, items |
 | Step, call-depth and output limits; deterministic random numbers | |
 | CLI (`check`, `run`, `test`, `explain`, `guide`), an MCP server, and a browser playground built to WebAssembly | |
 
-**Nothing here has been verified against UEFN yet.** Each of the 111 conformance files is marked
+**Nothing here has been verified against UEFN yet.** Each of the 112 conformance files is marked
 `uefn-verified: no`. The semantics follow the Book of Verse; where the Book is silent or
 ambiguous the choice made is listed in [docs/UNVERIFIED.md](docs/UNVERIFIED.md).
 
@@ -138,6 +141,23 @@ model written from the public API reference, not Epic's code, and are not yet co
 UEFN. The list of devices and helpers is in [docs/devices.md](docs/devices.md); a full
 example is in [examples/door](examples/door/door.verse).
 
+## Bevy gameplay
+
+```sh
+cargo run --locked --manifest-path examples/bevy-world/Cargo.toml
+```
+
+Walk through a 2D observatory, charge its relay, open a timed gate, and scan with the
+beacon. The browser demo has a Verse editor for all three stations. [Play Signal Observatory](https://reverse-sepia.vercel.app/observatory/) · [Controls](docs/bevy-world.md)
+
+```sh
+cargo run -p reverse-bevy --example timed_door
+```
+
+The example loads a Verse asset, sends a Bevy interaction message, and steps the fixed
+clock until the door closes. Use `ReversePlugin` with the same ECS bindings in your
+game and headless tests. [Install and register bindings](docs/bevy-integration.md)
+
 ## Using it with AI agents
 
 Verse is a low-resource language: models have seen little of it and carry habits from
@@ -168,6 +188,7 @@ crates/check     types, failure contexts, effects, explanations (no dependencies
 crates/vm        interpreter, transactional undo log, built-ins (no dependencies)
 crates/cli       command line, JSON reports, MCP server         (serde_json)
 crates/wasm      three-function C ABI for the browser          (serde_json)
+crates/bevy      Verse assets, fixed-tick runtime and ECS bindings (Bevy 0.20)
 playground/      the browser playground: page, examples, bundler, WebAssembly tests
 tests/conformance  parse/, check/ and run/ snippets with inline expectations
 agents/          guide, skill and MCP configuration for AI agents
@@ -197,9 +218,8 @@ generated reference sections first.
 
 ## Website
 
-The website is the documentation site with the playground at `/playground/`.
-`scripts/vercel-build.sh` builds both into `dist/`; it installs Rust and Python Markdown
-when they are missing, so it runs unchanged on Vercel. `vercel.json` points Vercel at it.
+The website serves the docs, the playground at `/playground/`, and Signal Observatory
+at `/observatory/`. `scripts/vercel-build.sh` builds them into `dist/` for Vercel.
 With the repository imported into Vercel, every push to `main` deploys to production and
 every other branch gets a preview.
 

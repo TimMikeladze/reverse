@@ -17,6 +17,7 @@ mod builtins;
 mod conc;
 pub mod value;
 
+pub use conc::Session;
 use reverse_syntax::ast::*;
 use reverse_syntax::Span;
 use std::cell::RefCell;
@@ -39,6 +40,20 @@ pub enum Ctrl {
     Break,
     Return(Value),
     Error(Box<RuntimeError>),
+}
+
+/// Native calls and their reversible effects. A host stages effects instead of
+/// publishing them from `call`, and releases committed effects after a tick.
+pub trait Host {
+    /// Arguments are in source evaluation order. `Some` carries a named argument's name.
+    fn call(
+        &mut self,
+        name: &str,
+        args: &[(Option<String>, Value)],
+        span: Span,
+    ) -> Result<Value, Ctrl>;
+    fn checkpoint(&self) -> usize;
+    fn rollback(&mut self, checkpoint: usize);
 }
 
 type R = Result<Value, Ctrl>;
@@ -153,6 +168,7 @@ pub struct Program {
     ext: HashMap<String, Vec<Rc<FuncDef>>>,
     global_defs: Vec<Def>,
     modules: HashSet<String>,
+    host_functions: HashSet<String>,
     /// Functions that may suspend (directly or through what they call).
     async_funcs: HashSet<String>,
     /// Method names that may suspend in at least one class.
@@ -174,6 +190,11 @@ fn flatten<'a>(items: &'a [Expr], out: &mut Vec<&'a Expr>, modules: &mut HashSet
 
 impl Program {
     pub fn load(module: &Module) -> Program {
+        Self::load_with_host(module, [])
+    }
+
+    /// Link synchronous host function names while resolving suspension points.
+    pub fn load_with_host(module: &Module, names: impl IntoIterator<Item = String>) -> Program {
         let mut items = Vec::new();
         let mut modules = HashSet::new();
         flatten(&module.items, &mut items, &mut modules);
@@ -225,6 +246,7 @@ impl Program {
             ext,
             global_defs,
             modules,
+            host_functions: names.into_iter().collect(),
             async_funcs: HashSet::new(),
             async_methods: HashSet::new(),
             all_methods: HashSet::new(),
@@ -443,6 +465,12 @@ impl Env {
 enum Undo {
     Cell(Rc<RefCell<Value>>, Value),
     Field(Rc<Object>, usize, Value),
+    Spawned(usize),
+}
+
+struct Checkpoint {
+    writes: usize,
+    host: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -470,6 +498,7 @@ pub struct Vm {
     /// Simulated seconds since the run began. Only `Sleep` advances it.
     pub now: f64,
     sched: conc::Sched,
+    host: Option<Box<dyn Host>>,
 }
 
 impl Vm {
@@ -489,17 +518,46 @@ impl Vm {
             rng,
             now: 0.0,
             sched: conc::Sched::default(),
+            host: None,
         }
     }
 
     pub fn new(prog: Rc<Program>, limits: Limits) -> Result<Vm, RuntimeError> {
-        let mut vm = Vm::blank(prog.clone(), limits);
+        Self::new_using_host(prog, limits, None)
+    }
+
+    pub fn new_with_host(
+        prog: Rc<Program>,
+        limits: Limits,
+        host: Box<dyn Host>,
+    ) -> Result<Vm, RuntimeError> {
+        Self::new_using_host(prog, limits, Some(host))
+    }
+
+    fn new_using_host(
+        prog: Rc<Program>,
+        limits: Limits,
+        host: Option<Box<dyn Host>>,
+    ) -> Result<Vm, RuntimeError> {
+        let mut vm = Vm::blank(prog, limits);
+        vm.host = host;
+        let checkpoint = vm.host_checkpoint();
+        if let Err(e) = vm.init_globals() {
+            vm.rollback_host(checkpoint);
+            return Err(e);
+        }
+        Ok(vm)
+    }
+
+    fn init_globals(&mut self) -> Result<(), RuntimeError> {
+        let prog = self.prog.clone();
         for d in &prog.global_defs {
             let Some(value) = &d.value else { continue };
             let mut env = Env::new(None, None);
-            match vm.eval(value, &mut env) {
+            match self.eval(value, &mut env) {
                 Ok(v) => {
-                    vm.globals.insert(d.name.clone(), Rc::new(RefCell::new(v)));
+                    self.globals
+                        .insert(d.name.clone(), Rc::new(RefCell::new(v)));
                 }
                 Err(Ctrl::Error(e)) => return Err(*e),
                 Err(_) => {
@@ -511,7 +569,7 @@ impl Vm {
                 }
             }
         }
-        Ok(vm)
+        Ok(())
     }
 
     pub fn has_function(&self, name: &str) -> bool {
@@ -528,41 +586,38 @@ impl Vm {
                 span: None,
             });
         };
-        let cp = self.begin();
         let args = args.into_iter().map(|v| (None, v)).collect();
-        match self.call_fn(&def, None, None, args, def.name_span) {
-            Ok(v) => {
-                self.commit();
-                Outcome::Value(v)
-            }
-            Err(Ctrl::Fail) => {
-                self.rollback(cp);
-                Outcome::Failed
-            }
-            Err(Ctrl::Error(e)) => {
-                self.rollback(cp);
-                Outcome::Error(*e)
-            }
-            Err(Ctrl::Return(v)) => {
-                self.commit();
-                Outcome::Value(v)
-            }
-            Err(Ctrl::Break) => {
-                self.rollback(cp);
-                Outcome::Error(RuntimeError {
-                    kind: "runtime_error",
-                    message: "`break` outside a loop".into(),
-                    span: None,
-                })
-            }
+        conc::outcome(self.in_entry(|vm| vm.call_fn(&def, None, None, args, def.name_span)))
+    }
+
+    fn in_entry(&mut self, f: impl FnOnce(&mut Vm) -> R) -> R {
+        let cp = self.begin();
+        let result = f(self);
+        match result {
+            Ok(_) | Err(Ctrl::Return(_)) => self.commit(),
+            _ => self.rollback(cp),
         }
+        result
     }
 
     // ------------------------------------------------------------ transactions
 
-    fn begin(&mut self) -> usize {
+    fn host_checkpoint(&self) -> Option<usize> {
+        self.host.as_ref().map(|host| host.checkpoint())
+    }
+
+    fn rollback_host(&mut self, checkpoint: Option<usize>) {
+        if let (Some(host), Some(checkpoint)) = (&mut self.host, checkpoint) {
+            host.rollback(checkpoint);
+        }
+    }
+
+    fn begin(&mut self) -> Checkpoint {
         self.txn += 1;
-        self.log.len()
+        Checkpoint {
+            writes: self.log.len(),
+            host: self.host_checkpoint(),
+        }
     }
     fn commit(&mut self) {
         self.txn -= 1;
@@ -570,13 +625,15 @@ impl Vm {
             self.log.clear();
         }
     }
-    fn rollback(&mut self, cp: usize) {
-        while self.log.len() > cp {
+    fn rollback(&mut self, cp: Checkpoint) {
+        while self.log.len() > cp.writes {
             match self.log.pop().unwrap() {
                 Undo::Cell(c, v) => *c.borrow_mut() = v,
                 Undo::Field(o, i, v) => o.fields.borrow_mut()[i] = v,
+                Undo::Spawned(len) => self.sched.truncate_spawned(len),
             }
         }
+        self.rollback_host(cp.host);
         self.txn -= 1;
     }
 
@@ -699,7 +756,7 @@ impl Vm {
         {
             return Ok(Value::Type(Rc::from(name)));
         }
-        if builtins::is_builtin(name) {
+        if builtins::is_builtin(name) || self.prog.host_functions.contains(name) {
             return Ok(Value::Func(Rc::new(FuncVal::Builtin(name.to_string()))));
         }
         Err(error(
@@ -1578,10 +1635,9 @@ impl Vm {
                     };
                     return if ok { Ok(v) } else { Err(Ctrl::Fail) };
                 }
-                if builtins::is_builtin(name) {
+                if builtins::is_builtin(name) || self.prog.host_functions.contains(name) {
                     let a = self.eval_args(args, env)?;
-                    let vals = a.into_iter().map(|(_, v)| v).collect();
-                    return builtins::call(self, name, vals, bracket, e.span);
+                    return self.call_builtin_or_host(name, a, bracket, e.span);
                 }
                 Err(error(
                     "runtime_error",
@@ -1674,10 +1730,7 @@ impl Vm {
                 FuncVal::User { def, this, class } => {
                     self.call_fn(def, this.clone(), *class, args, span)
                 }
-                FuncVal::Builtin(name) => {
-                    let vals = args.into_iter().map(|(_, v)| v).collect();
-                    builtins::call(self, name, vals, bracket, span)
-                }
+                FuncVal::Builtin(name) => self.call_builtin_or_host(name, args, bracket, span),
             },
             Value::Array(a) => match args.first() {
                 Some((_, Value::Int(i))) if *i >= 0 && (*i as usize) < a.len() => {
@@ -1722,6 +1775,32 @@ impl Vm {
                 span,
             )),
         }
+    }
+
+    fn call_builtin_or_host(
+        &mut self,
+        name: &str,
+        args: Vec<(Option<String>, Value)>,
+        bracket: bool,
+        span: Span,
+    ) -> R {
+        if self.prog.host_functions.contains(name) && !builtins::is_builtin(name) {
+            return match &mut self.host {
+                Some(host) => host.call(name, &args, span),
+                None => Err(error(
+                    "runtime_error",
+                    format!("host function `{name}` is unavailable"),
+                    span,
+                )),
+            };
+        }
+        builtins::call(
+            self,
+            name,
+            args.into_iter().map(|(_, value)| value).collect(),
+            bracket,
+            span,
+        )
     }
 
     /// Leaving a block runs the `defer` bodies it registered, last first.

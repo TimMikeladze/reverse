@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Signal Observatory</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --background: #0a1118;
+    --panel: #141f28;
+    --buffer: #101a23;
+    --line: #2b3e48;
+    --text: #e6f1ea;
+    --muted: #a0b6bd;
+    --cyan: #7ad5f9;
+    --mint: #82f0b9;
+    --amber: #ffc471;
+    background: var(--background);
+    color: var(--text);
+    font: 16px system-ui, sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; min-height: 100svh; padding: clamp(12px, 2.2vw, 32px); }
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(19rem, 28rem);
+    align-items: start;
+    gap: clamp(12px, 2vw, 28px);
+    max-width: 1680px;
+    margin: auto;
+  }
+  .game { position: relative; min-width: 0; aspect-ratio: 59 / 40; }
+  canvas { display: block; width: 100%; height: 100%; }
+  :focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; pointer-events: none; }
+  #loading[hidden] { display: none; }
+
+  .editor {
+    min-width: 0;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+    background: var(--panel);
+    font: 14px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+  .editor h1 { margin: 0 0 12px; font-size: 21px; font-weight: 650; }
+  .station-group { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  button {
+    appearance: none;
+    min-height: 36px;
+    padding: 5px 11px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--buffer);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+  button[aria-pressed="true"] { border-color: var(--cyan); color: var(--cyan); background: #172c39; }
+  button:not(:disabled):hover { border-color: var(--muted); }
+  button:disabled { opacity: 0.48; cursor: default; }
+  .buffer {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--buffer);
+  }
+  .buffer-title {
+    display: block;
+    padding: 6px 11px;
+    border-bottom: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .buffer-body {
+    display: grid;
+    grid-template-columns: 3.5ch minmax(0, 1fr);
+    height: clamp(19rem, 52svh, 36rem);
+  }
+  .line-numbers, .syntax, textarea {
+    margin: 0;
+    padding: 10px 8px;
+    border: 0;
+    background: transparent;
+    font: 13px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+    white-space: pre;
+    tab-size: 4;
+  }
+  .line-numbers { overflow: hidden; padding-inline: 2px 6px; color: #91a7af; text-align: right; user-select: none; }
+  .input { position: relative; min-width: 0; }
+  .syntax, textarea { position: absolute; inset: 0; }
+  .syntax { overflow: hidden; pointer-events: none; scrollbar-gutter: stable; }
+  .comment { color: var(--muted); }
+  .keyword { color: var(--cyan); }
+  .literal { color: var(--mint); }
+  .specifier { color: var(--amber); }
+  textarea {
+    width: 100%;
+    height: 100%;
+    color: transparent;
+    caret-color: var(--text);
+    overflow: auto;
+    resize: none;
+    scrollbar-gutter: stable;
+  }
+  textarea:focus-visible { outline-offset: -2px; }
+  textarea::selection { background: #7ad5f94d; color: transparent; }
+  @media (forced-colors: active) {
+    .syntax { visibility: hidden; }
+    textarea { color: CanvasText; caret-color: CanvasText; }
+    textarea::selection { color: HighlightText; background: Highlight; }
+  }
+  .editor-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+  .apply { background: var(--mint); border-color: var(--mint); color: #0a2118; font-weight: 650; }
+  .shortcut { color: var(--muted); margin-inline-start: auto; font-size: 12px; }
+  .status { margin: 12px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+  .status[data-tone="good"] { color: var(--mint); }
+  .status[data-tone="error"] { color: var(--amber); }
+  .diagnostics { display: grid; gap: 10px; max-height: 13rem; overflow: auto; margin: 0; padding: 0; list-style: none; }
+  .diagnostics:empty { display: none; }
+  .diagnostics li { padding-top: 9px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+  .diagnostics li:first-child { margin-top: 10px; }
+  .diagnostics p { margin: 5px 0 0; }
+  .diagnostic-code { min-height: 0; padding: 2px 7px; display: inline-block; color: var(--cyan); font-size: 12px; }
+  .diagnostics [data-severity="error"] .diagnostic-code { color: var(--amber); }
+  .help { color: var(--muted); font-size: 12px; }
+
+  @media (max-width: 940px) {
+    main { grid-template-columns: minmax(0, 1fr); }
+    .buffer-body { height: clamp(18rem, 52svh, 30rem); }
+  }
+</style>
+<main aria-label="Signal Observatory">
+  <section class="game" aria-label="Observatory game">
+    <canvas id="observatory" tabindex="0" aria-label="Move with WASD or arrows, E to interact, 1 for the relay, 2 for the gate, 3 for the beacon, and R to reload."></canvas>
+    <p id="loading" role="status">Loading Signal Observatory...</p>
+  </section>
+  <section id="verse-editor" class="editor" aria-labelledby="editor-heading">
+    <h1 id="editor-heading">Verse editor</h1>
+    <div class="station-group" role="group" aria-label="Station">
+      <button type="button" data-station="relay" aria-pressed="false">Relay</button>
+      <button type="button" data-station="gate" aria-pressed="false">Gate</button>
+      <button type="button" data-station="beacon" aria-pressed="true">Beacon</button>
+    </div>
+    <div class="buffer">
+      <label for="verse-source" id="source-label" class="buffer-title">beacon.verse</label>
+      <div class="buffer-body">
+        <pre id="line-numbers" class="line-numbers" aria-hidden="true"></pre>
+        <div class="input">
+          <pre id="verse-syntax" class="syntax" aria-hidden="true"></pre>
+          <textarea id="verse-source" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="editor-shortcut" readonly></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="editor-actions">
+      <button type="button" id="apply-draft" class="apply" disabled>Apply draft</button>
+      <button type="button" id="reset-draft" disabled>Reset draft</button>
+      <span class="shortcut" id="editor-shortcut" title="Tab indents. Shift+Tab leaves the editor.">Ctrl or ⌘ + Enter</span>
+    </div>
+    <p id="editor-status" class="status" role="status">Loading station source...</p>
+    <ul id="editor-diagnostics" class="diagnostics" aria-label="Verse diagnostics"></ul>
+  </section>
+</main>
+<script type="module">
+  import { createEditor } from './editor.js';
+
+  const editor = createEditor();
+  const loading = document.querySelector('#loading');
+  try {
+    const runtime = await import('./observatory.js');
+    await runtime.default();
+    editor.connect(runtime.submit_verse_edit);
+    loading.hidden = true;
+    if (document.activeElement === document.body) {
+      document.querySelector('#observatory').focus({ preventScroll: true });
+    }
+  } catch (error) {
+    loading.textContent = 'Signal Observatory failed to start. See the browser console.';
+    editor.unavailable();
+    console.error(error);
+  }
+</script>
+</html>

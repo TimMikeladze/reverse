@@ -4,6 +4,7 @@
   "description": "An independent, open-source toolchain for the Verse language: checker, interpreter, device stand-ins and tools for AI agents. Not affiliated with Epic Games.",
   "repo_url": "https://github.com/TimMikeladze/reverse",
   "playground_url": "playground/",
+  "observatory_url": "observatory/",
   "footer": "An independent implementation of the Verse language, not affiliated with Epic Games. Verse, Unreal Engine, UEFN and Fortnite are trademarks of Epic Games, Inc. Dual-licensed MIT or Apache-2.0.",
   "home": {
     "source": "README.md",
@@ -11,13 +12,15 @@
     "actions": [
       { "label": "Get started", "page": "start" },
       { "label": "Read the guide", "page": "guide" },
-      { "label": "Open the playground", "url": "playground" }
+      { "label": "Open the playground", "url": "playground" },
+      { "label": "Play Signal Observatory", "url": "observatory" }
     ]
   },
   "pages": [
     { "slug": "start", "nav": "Get started", "title": "Get started", "source": "README.md", "skip_sections": ["What you get"] },
     { "slug": "guide", "nav": "Guide", "source": "agents/VERSE_GUIDE.md" },
     { "slug": "devices", "nav": "Devices", "source": "docs/devices.md" },
+    { "slug": "bevy", "nav": "Bevy", "source": "docs/bevy-integration.md" },
     { "slug": "diagnostics", "nav": "Diagnostics", "source": "docs/diagnostics.md" },
     { "slug": "grammar", "nav": "Grammar", "source": "docs/grammar.md" },
     { "slug": "unverified", "nav": "Unverified", "source": "docs/UNVERIFIED.md" }

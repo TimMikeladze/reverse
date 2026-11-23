@@ -50,6 +50,14 @@ those recorded outputs can settle many of these without a Windows machine.
 The scheduler is deterministic and single-threaded, and its clock is simulated. The Book
 fixes what each construct means; it leaves the ordering details below open.
 
+An embedded session advances only when its host supplies a tick. In that mode `Sleep(0.0)`
+and negative durations resume no sooner than the next host tick. Positive sleeps use
+nanosecond deadlines based on the clock supplied by the host. These are choices for
+embedding the runner in an engine with a fixed timestep. An embedded failure context
+discards deferred spawns it queued before failing, along with its staged host effects.
+The Book describes the lifetime of a started task but leaves this speculative scheduling
+case open.
+
 | # | Behaviour | Choice made here | Why it is uncertain |
 | --- | --- | --- | --- |
 | 27 | Tasks that become ready at the same instant | They run in a fixed order: the entry function first, then tasks in the order they were created; inside a call, its body before its background tasks | The Book does not state an order |

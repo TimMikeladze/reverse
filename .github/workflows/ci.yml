@@ -44,16 +44,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - run: cargo build
       - name: Generated reference pages are up to date
         run: |
           python3 scripts/gen-docs.py
           git diff --exit-code docs
-      - name: Build the site
-        run: |
-          pip install markdown
-          python3 site/build.py
+      - name: Build the site and browser demos
+        run: bash scripts/vercel-build.sh
       - uses: actions/upload-artifact@v4
         with:
           name: site
-          path: site/dist
+          path: dist

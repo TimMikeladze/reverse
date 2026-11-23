@@ -369,6 +369,15 @@ TestGateOpens()<decides><transacts> : void =
 - A device or member the stand-ins do not model is warning `V6002`: it is not checked, and
   calling it at run time is an error. Say so to the user and leave that part for UEFN.
 
+## Bevy gameplay
+
+Attach a `.verse` asset to an entity with `VerseScript`. Define handlers using the
+same name and payload type registered by the Bevy app. A registered component getter
+or setter can fail if the entity lacks the component, so call it with square brackets
+inside a failure context. `Sleep` resumes on the fixed clock. Check Bevy-bound source
+with `app.check_verse(source)` to use the game's binding registry.
+[Bevy plugin setup](../docs/bevy-integration.md)
+
 ## Not yet supported by reverse
 
 Rejected with a clear error: nested functions, tuple-destructuring parameters, parametric

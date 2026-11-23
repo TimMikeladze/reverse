@@ -711,22 +711,20 @@ impl<'a> Lexer<'a> {
     }
 
     fn escape(&mut self) -> Option<char> {
-        // At the character after a backslash.
-        let c = self.peek()?;
-        self.i += 1;
+        let start = self.i - 1;
+        let c = self.src[self.i..].chars().next()?;
+        self.i += c.len_utf8();
         Some(match c {
-            b'n' => '\n',
-            b't' => '\t',
-            b'r' => '\r',
-            b'"' | b'\'' | b'\\' | b'{' | b'}' | b'<' | b'>' | b'&' | b'#' | b'~' => c as char,
+            'n' => '\n',
+            't' => '\t',
+            'r' => '\r',
+            '"' | '\'' | '\\' | '{' | '}' | '<' | '>' | '&' | '#' | '~' => c,
             _ => {
-                self.err(
-                    "V0007",
-                    self.i - 2,
-                    self.i,
-                    &format!("unknown escape `\\{}`", c as char),
+                self.err("V0007", start, self.i, &format!("unknown escape `\\{c}`"))
+                    .help = Some(
+                    "write literal characters directly and escape a backslash as `\\\\`".into(),
                 );
-                c as char
+                c
             }
         })
     }

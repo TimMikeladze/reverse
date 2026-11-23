@@ -29,6 +29,10 @@ use std::future::{poll_fn, Future};
 use std::pin::Pin;
 use std::rc::{Rc, Weak};
 use std::task::{Context, Poll, Waker};
+use std::time::Duration;
+
+mod session;
+pub use session::Session;
 
 pub(crate) type Sh = Rc<RefCell<Vm>>;
 pub(crate) type Fut<'a> = Pin<Box<dyn Future<Output = R> + 'a>>;
@@ -42,6 +46,7 @@ const TICK: f64 = 1.0 / 30.0;
 pub(crate) struct Sched {
     me: Weak<RefCell<Vm>>,
     round: u64,
+    host_clock: Option<HostClock>,
     /// Wake times registered by sleeping tasks during the current round.
     wakes: Vec<f64>,
     /// Some task yielded with `Sleep(0.0)` this round.
@@ -54,6 +59,22 @@ pub(crate) struct Sched {
     suspend_cache: HashMap<usize, bool>,
     /// Bodies of detached tasks, copied once per source location.
     bodies: HashMap<usize, Rc<Expr>>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct HostClock {
+    tick: u64,
+    elapsed: Duration,
+}
+
+impl Sched {
+    fn sleep_round(&self) -> u64 {
+        self.host_clock.map_or(self.round, |clock| clock.tick)
+    }
+
+    pub(super) fn truncate_spawned(&mut self, len: usize) {
+        self.spawned.truncate(len);
+    }
 }
 
 // ---------------------------------------------------------------- analysis
@@ -150,6 +171,7 @@ pub(crate) fn may_suspend(prog: &Program, e: &Expr) -> bool {
                         || !(prog.funcs.contains_key(n)
                             || prog.all_methods.contains(n)
                             || builtins::is_builtin(n)
+                            || prog.host_functions.contains(n)
                             || prog.class_ids.contains_key(n)
                             || tuple_index)
                 }
@@ -259,10 +281,7 @@ fn execute(sh: &Sh, def: Rc<FuncDef>) -> Outcome {
     loop {
         {
             let mut vm = sh.borrow_mut();
-            vm.sched.round += 1;
-            vm.sched.wakes.clear();
-            vm.sched.yielded = false;
-            vm.sched.progress = false;
+            reset_round(&mut vm);
             if vm.step(span).is_err() {
                 let max = vm.limits.max_steps;
                 return fail(
@@ -276,27 +295,9 @@ fn execute(sh: &Sh, def: Rc<FuncDef>) -> Outcome {
         }
         if let Poll::Ready(r) = root.as_mut().poll(&mut cx) {
             drop(tasks);
-            return match r {
-                Ok(v) | Err(Ctrl::Return(v)) => Outcome::Value(v),
-                Err(Ctrl::Fail) => Outcome::Failed,
-                Err(Ctrl::Error(e)) => Outcome::Error(*e),
-                Err(Ctrl::Break) => fail("runtime_error", "`break` outside a loop".into()),
-            };
+            return outcome(r);
         }
-        let mut i = 0;
-        loop {
-            let fresh = std::mem::take(&mut sh.borrow_mut().sched.spawned);
-            tasks.extend(fresh);
-            if i >= tasks.len() {
-                break;
-            }
-            if tasks[i].as_mut().poll(&mut cx).is_ready() {
-                drop(tasks.remove(i));
-                sh.borrow_mut().sched.progress = true;
-            } else {
-                i += 1;
-            }
-        }
+        poll_tasks(sh, &mut tasks, &mut cx);
         let mut vm = sh.borrow_mut();
         if let Some(e) = vm.sched.fatal.take() {
             return Outcome::Error(e);
@@ -319,6 +320,42 @@ fn execute(sh: &Sh, def: Rc<FuncDef>) -> Outcome {
     }
 }
 
+fn reset_round(vm: &mut Vm) {
+    vm.sched.round += 1;
+    vm.sched.wakes.clear();
+    vm.sched.yielded = false;
+    vm.sched.progress = false;
+}
+
+fn poll_tasks(sh: &Sh, tasks: &mut Vec<TaskFut>, cx: &mut Context<'_>) {
+    let mut i = 0;
+    loop {
+        tasks.append(&mut sh.borrow_mut().sched.spawned);
+        if i >= tasks.len() {
+            break;
+        }
+        if tasks[i].as_mut().poll(cx).is_ready() {
+            drop(tasks.remove(i));
+            sh.borrow_mut().sched.progress = true;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+pub(crate) fn outcome(result: R) -> Outcome {
+    match result {
+        Ok(v) | Err(Ctrl::Return(v)) => Outcome::Value(v),
+        Err(Ctrl::Fail) => Outcome::Failed,
+        Err(Ctrl::Error(e)) => Outcome::Error(*e),
+        Err(Ctrl::Break) => Outcome::Error(RuntimeError {
+            kind: "runtime_error",
+            message: "`break` outside a loop".into(),
+            span: None,
+        }),
+    }
+}
+
 // ---------------------------------------------------------------- leaf futures
 
 async fn poll_once(f: &mut Fut<'_>) -> Option<R> {
@@ -331,29 +368,57 @@ async fn poll_once(f: &mut Fut<'_>) -> Option<R> {
     .await
 }
 
+enum SleepDeadline {
+    Never,
+    NextRound(u64),
+    Simulated(f64),
+    Hosted(Duration),
+}
+
 async fn sleep(sh: &Sh, secs: f64) -> R {
-    let (start_round, wake) = {
+    use SleepDeadline::*;
+    let deadline = {
         let vm = sh.borrow();
-        (vm.sched.round, vm.now + secs)
+        if secs.is_nan() || secs == f64::INFINITY {
+            Never
+        } else if secs <= 0.0 {
+            NextRound(vm.sched.sleep_round())
+        } else if let Some(clock) = vm.sched.host_clock {
+            // Keep host deadlines in integer time so a decimal duration ending
+            // exactly on a tick does not drift to the following tick.
+            Duration::try_from_secs_f64(secs)
+                .ok()
+                .and_then(|delta| {
+                    clock
+                        .elapsed
+                        .checked_add(delta.max(Duration::from_nanos(1)))
+                })
+                .map_or(Never, Hosted)
+        } else {
+            Simulated(vm.now + secs)
+        }
     };
     poll_fn(|_| {
         let mut vm = sh.borrow_mut();
-        if secs.is_nan() || secs == f64::INFINITY {
-            // Sleeps forever; only cancellation ends it.
-            Poll::Pending
-        } else if secs <= 0.0 {
-            // A yield: let every other task run before continuing.
-            if vm.sched.round > start_round {
-                Poll::Ready(Ok(Value::Void))
-            } else {
+        match deadline {
+            Never => Poll::Pending,
+            NextRound(start) if vm.sched.sleep_round() <= start => {
                 vm.sched.yielded = true;
                 Poll::Pending
             }
-        } else if vm.now >= wake {
-            Poll::Ready(Ok(Value::Void))
-        } else {
-            vm.sched.wakes.push(wake);
-            Poll::Pending
+            Simulated(wake) if vm.now < wake => {
+                vm.sched.wakes.push(wake);
+                Poll::Pending
+            }
+            Hosted(wake)
+                if vm
+                    .sched
+                    .host_clock
+                    .is_some_and(|clock| clock.elapsed < wake) =>
+            {
+                Poll::Pending
+            }
+            _ => Poll::Ready(Ok(Value::Void)),
         }
     })
     .await
@@ -406,7 +471,7 @@ impl Drop for Scope {
         if self.env.defers.is_empty() {
             return;
         }
-        let pending: Vec<(Rc<Expr>, Env)> = self.env.defers.drain(..).collect();
+        let pending = std::mem::take(&mut self.env.defers);
         if let Ok(mut vm) = self.sh.try_borrow_mut() {
             for (body, mut scope) in pending.into_iter().rev() {
                 let _ = vm.eval(&body, &mut scope);
@@ -467,6 +532,9 @@ pub(crate) fn spawn_deferred(vm: &mut Vm, body: &Expr, env: &mut Env, span: Span
             span,
         ));
     };
+    if vm.txn > 0 && vm.sched.host_clock.is_some() {
+        vm.log.push(crate::Undo::Spawned(vm.sched.spawned.len()));
+    }
     let body = vm.body_rc(body);
     let cell = Rc::new(TaskCell::default());
     let mut env = env.child();
@@ -491,8 +559,8 @@ pub(crate) fn spawn_deferred(vm: &mut Vm, body: &Expr, env: &mut Env, span: Span
 
 // ---------------------------------------------------------------- calls
 
-struct DepthGuard(Sh);
-impl Drop for DepthGuard {
+struct DepthGuard<'a>(&'a Sh);
+impl Drop for DepthGuard<'_> {
     fn drop(&mut self) {
         if let Ok(mut vm) = self.0.try_borrow_mut() {
             vm.depth = vm.depth.saturating_sub(1);
@@ -508,7 +576,8 @@ fn acall_fn<'a>(
     args: Vec<(Option<String>, Value)>,
     span: Span,
 ) -> Fut<'a> {
-    Box::pin(async move {
+    let name = def.clone();
+    let mut call = Box::pin(async move {
         let Some(body) = &def.body else {
             return Err(error(
                 "runtime_error",
@@ -516,21 +585,6 @@ fn acall_fn<'a>(
                 span,
             ));
         };
-        {
-            let mut vm = sh.borrow_mut();
-            if vm.depth >= vm.limits.max_depth {
-                return Err(error(
-                    "stack_overflow",
-                    format!(
-                        "call depth exceeded {} while calling `{}`; the recursion probably never ends",
-                        vm.limits.max_depth, def.name
-                    ),
-                    span,
-                ));
-            }
-            vm.depth += 1;
-        }
-        let _depth = DepthGuard(sh.clone());
         let env = sh.borrow_mut().bind_params(&def, this, class, args, span)?;
         let mut scope = Scope {
             sh: sh.clone(),
@@ -573,7 +627,26 @@ fn acall_fn<'a>(
             Err(Ctrl::Break) => Err(error("runtime_error", "`break` outside a loop", span)),
             Err(other) => Err(other),
         }
-    })
+    });
+    Box::pin(poll_fn(move |cx| {
+        {
+            let mut vm = sh.borrow_mut();
+            if vm.depth >= vm.limits.max_depth {
+                return Poll::Ready(Err(error(
+                    "stack_overflow",
+                    format!(
+                        "call depth exceeded {} while calling `{}`; the recursion probably never ends",
+                        vm.limits.max_depth, name.name
+                    ),
+                    span,
+                )));
+            }
+            vm.depth += 1;
+        }
+        // A pending call has no stack frame until it is polled again.
+        let _depth = DepthGuard(sh);
+        call.as_mut().poll(cx)
+    }))
 }
 
 enum Target {
@@ -668,7 +741,7 @@ impl Vm {
         if let Some(&cid) = self.prog.class_ids.get(name) {
             return Ok(Target::Cast(cid));
         }
-        if builtins::is_builtin(name) {
+        if builtins::is_builtin(name) || self.prog.host_functions.contains(name) {
             return Ok(Target::Builtin(name.to_string()));
         }
         Err(error(
@@ -748,11 +821,11 @@ async fn acall_expr(
             FuncVal::User { def, this, class } => {
                 acall_fn(sh, def.clone(), this.clone(), *class, a, span).await
             }
-            FuncVal::Builtin(name) => abuiltin(sh, name, values(a), bracket, span).await,
+            FuncVal::Builtin(name) => abuiltin(sh, name, a, bracket, span).await,
         },
         Target::Val(v) => sh.borrow_mut().call_value(v, a, bracket, span),
         Target::Cast(cid) => sh.borrow_mut().cast(cid, a, bracket, span),
-        Target::Builtin(name) => abuiltin(sh, &name, values(a), bracket, span).await,
+        Target::Builtin(name) => abuiltin(sh, &name, a, bracket, span).await,
         Target::Method(recv, name) => {
             let ext = sh.borrow().pick_extension(&recv, &name, &a);
             if let Some(def) = ext {
@@ -799,10 +872,16 @@ async fn amethod(
     }
 }
 
-async fn abuiltin(sh: &Sh, name: &str, args: Vec<Value>, bracket: bool, span: Span) -> R {
+async fn abuiltin(
+    sh: &Sh,
+    name: &str,
+    args: Vec<(Option<String>, Value)>,
+    bracket: bool,
+    span: Span,
+) -> R {
     if name == "Sleep" {
         return match args.first() {
-            Some(Value::Float(secs)) => sleep(sh, *secs).await,
+            Some((_, Value::Float(secs))) => sleep(sh, *secs).await,
             _ => Err(error(
                 "runtime_error",
                 "`Sleep` takes a number of seconds as a float",
@@ -810,7 +889,8 @@ async fn abuiltin(sh: &Sh, name: &str, args: Vec<Value>, bracket: bool, span: Sp
             )),
         };
     }
-    builtins::call(&mut sh.borrow_mut(), name, args, bracket, span)
+    sh.borrow_mut()
+        .call_builtin_or_host(name, args, bracket, span)
 }
 
 // ---------------------------------------------------------------- evaluation

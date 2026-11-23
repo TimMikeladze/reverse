@@ -19,7 +19,10 @@ pub use explain::{explain, CODES};
 #[derive(Clone, Debug)]
 pub struct FnSummary {
     pub name: String,
+    pub name_span: Span,
     pub required_params: usize,
+    pub params: Vec<ParamSig>,
+    pub return_type: Ty,
     pub decides: bool,
     pub suspends: bool,
     pub signature: String,
@@ -42,12 +45,18 @@ impl CheckResult {
 /// Parse and check a source file. Diagnostics from both stages are merged
 /// and sorted by position.
 pub fn analyze(src: &str) -> (Module, CheckResult) {
+    analyze_with_host(src, &[])
+}
+
+/// Parse and check a source file with additional functions provided by the host.
+/// Program declarations and built-ins take precedence over host functions.
+pub fn analyze_with_host(src: &str, host: &[FuncSig]) -> (Module, CheckResult) {
     let (module, mut diags) = reverse_syntax::parse(src);
     let syntax_ok = !diags.iter().any(|d| d.severity == Severity::Error);
     if syntax_ok && stdlib::wanted(src) {
-        return analyze_with_library(src);
+        return analyze_with_library(src, host);
     }
-    let mut result = check(src, &module);
+    let mut result = check_at(src, &module, u32::MAX, host);
     diags.append(&mut result.diagnostics);
     result.diagnostics = tidy(diags);
     (module, result)
@@ -62,12 +71,12 @@ fn tidy(mut diags: Vec<Diagnostic>) -> Vec<Diagnostic> {
 /// Check a file that imports Fortnite modules together with the built-in
 /// stand-ins. The stand-ins are appended after the file, so every position
 /// in the file itself is unchanged; diagnostics inside them are dropped.
-fn analyze_with_library(src: &str) -> (Module, CheckResult) {
+fn analyze_with_library(src: &str, host: &[FuncSig]) -> (Module, CheckResult) {
     let lib = stdlib::library_for(src);
     let lib_start = src.len() as u32 + 1;
     let full = format!("{}\n{}", src, lib.text);
     let (module, mut diags) = reverse_syntax::parse(&full);
-    let mut result = check_at(&full, &module, lib_start);
+    let mut result = check_at(&full, &module, lib_start, host);
     diags.append(&mut result.diagnostics);
     diags.retain(|d| d.span.start < lib_start);
     result
@@ -163,7 +172,7 @@ fn analyze_with_library(src: &str) -> (Module, CheckResult) {
 }
 
 pub fn check(src: &str, module: &Module) -> CheckResult {
-    check_at(src, module, u32::MAX)
+    check_at(src, module, u32::MAX, &[])
 }
 
 /// Diagnostics inside the built-in stand-ins themselves; a test keeps this
@@ -174,7 +183,7 @@ pub fn library_diagnostics() -> Vec<String> {
     let lib_start = src.len() as u32 + 1;
     let full = format!("{}\n{}", src, lib.text);
     let (module, mut diags) = reverse_syntax::parse(&full);
-    diags.append(&mut check_at(&full, &module, lib_start).diagnostics);
+    diags.append(&mut check_at(&full, &module, lib_start, &[]).diagnostics);
     let index = reverse_syntax::LineIndex::new(&full);
     diags
         .iter()
@@ -192,15 +201,18 @@ pub fn library_diagnostics() -> Vec<String> {
         .collect()
 }
 
-fn check_at(src: &str, module: &Module, lib_start: u32) -> CheckResult {
-    let mut c = Checker::new(src);
+fn check_at(src: &str, module: &Module, lib_start: u32, host: &[FuncSig]) -> CheckResult {
+    let mut c = Checker::new(src, host);
     c.lib_start = lib_start;
     c.run(module);
     let mut functions: Vec<FnSummary> = Vec::new();
-    for sig in &c.fn_order {
+    for (sig, name_span) in &c.fn_order {
         functions.push(FnSummary {
             name: sig.name.clone(),
+            name_span: *name_span,
             required_params: sig.params.iter().filter(|p| !p.has_default).count(),
+            params: sig.params.clone(),
+            return_type: sig.ret.clone(),
             decides: sig.effects.decides,
             suspends: sig.effects.suspends,
             signature: c.show_sig(sig),
@@ -327,8 +339,9 @@ struct Checker<'s> {
     enums: Vec<EnumInfo>,
     enum_ids: HashMap<String, usize>,
     funcs: HashMap<String, FuncSig>,
+    host_funcs: HashMap<&'s str, &'s FuncSig>,
     /// Every free function in source order, overloads included.
-    fn_order: Vec<FuncSig>,
+    fn_order: Vec<(FuncSig, Span)>,
     /// Names defined more than once, with every signature.
     overloads: HashMap<String, Vec<FuncSig>>,
     /// Extension methods by name; the receiver is the first parameter.
@@ -363,7 +376,7 @@ fn flatten<'a>(items: &'a [Expr], out: &mut Vec<&'a Expr>, modules: &mut HashSet
 }
 
 impl<'s> Checker<'s> {
-    fn new(src: &'s str) -> Checker<'s> {
+    fn new(src: &'s str, host: &'s [FuncSig]) -> Checker<'s> {
         Checker {
             src,
             diags: Vec::new(),
@@ -372,6 +385,7 @@ impl<'s> Checker<'s> {
             enums: Vec::new(),
             enum_ids: HashMap::new(),
             funcs: HashMap::new(),
+            host_funcs: host.iter().map(|sig| (sig.name.as_str(), sig)).collect(),
             fn_order: Vec::new(),
             overloads: HashMap::new(),
             ext: HashMap::new(),
@@ -1240,7 +1254,7 @@ impl<'s> Checker<'s> {
                 } else {
                     self.funcs.insert(f.name.clone(), sig.clone());
                 }
-                self.fn_order.push(sig);
+                self.fn_order.push((sig, f.name_span));
             }
         }
 
@@ -2286,6 +2300,9 @@ impl<'s> Checker<'s> {
         ) {
             return Ty::TypeOf(Box::new(Ty::Unknown));
         }
+        if let Some(&sig) = self.host_funcs.get(name) {
+            return Ty::Func(Box::new(sig.clone()));
+        }
         self.unknown_name(name, span);
         Ty::Unknown
     }
@@ -2319,6 +2336,7 @@ impl<'s> Checker<'s> {
         }
         cands.extend(self.globals.keys().cloned());
         cands.extend(self.funcs.keys().cloned());
+        cands.extend(self.host_funcs.keys().map(|name| name.to_string()));
         cands.extend(self.class_ids.keys().cloned());
         cands.extend(self.enum_ids.keys().cloned());
         if let Some(c) = self.cur_class {
@@ -3279,6 +3297,9 @@ impl<'s> Checker<'s> {
                 }
                 if builtins::is_generic(name) {
                     return builtins::generic_call(self, name, e, callee_end, args, bracket);
+                }
+                if let Some(&sig) = self.host_funcs.get(name.as_str()) {
+                    return self.apply_sig(sig, e, callee_end, args, bracket, true);
                 }
                 self.unknown_name(name, callee.span);
                 for a in args {
