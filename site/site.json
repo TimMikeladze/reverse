@@ -2,7 +2,7 @@
   "name": "reverse",
   "title": "reverse: a Verse toolchain",
   "description": "An independent, open-source toolchain for the Verse language: checker, interpreter, device stand-ins and tools for AI agents. Not affiliated with Epic Games.",
-  "repo_url": "",
+  "repo_url": "https://github.com/TimMikeladze/reverse",
   "playground_url": "https://claude.ai/artifact/RQ2ZS2NqcNAA3esWY5rnwo",
   "footer": "An independent implementation of the Verse language, not affiliated with Epic Games. Verse, Unreal Engine, UEFN and Fortnite are trademarks of Epic Games, Inc. Dual-licensed MIT or Apache-2.0.",
   "home": {
