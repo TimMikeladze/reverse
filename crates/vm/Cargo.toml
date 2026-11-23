@@ -1,0 +1,9 @@
+[package]
+name = "reverse-vm"
+description = "Interpreter with failure and transactional rollback for the Verse language (independent implementation)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+reverse-syntax = { path = "../syntax" }

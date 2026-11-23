@@ -1,0 +1,13 @@
+[package]
+name = "reverse-wasm"
+description = "WebAssembly build of the reverse Verse toolchain, for the browser playground"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+reverse-cli = { path = "../cli" }
+serde_json = "1"

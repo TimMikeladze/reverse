@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "verse": {
+      "command": "reverse",
+      "args": ["mcp"]
+    }
+  }
+}

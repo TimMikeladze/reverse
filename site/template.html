@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<meta name="description" content="{{description}}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@1,6..72,400&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: one quiet reading column. The only display moment is the
+   landing stanza: four lines, numbered like source, set in an italic serif. */
+:root {
+  --paper: #f5f7f6;
+  --panel: #e9eeeb;
+  --ink: #15211c;
+  --muted: #5a6a62;
+  --rule: #cfd8d3;
+  --accent: #23684a;
+  --accent-ink: #ffffff;
+  --err: #a8322d;
+  --warn: #8a5a00;
+  --display: "Newsreader", "Iowan Old Style", Georgia, serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --measure: 44rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #101614;
+    --panel: #18211d;
+    --ink: #dfe8e3;
+    --muted: #93a39b;
+    --rule: #2b3832;
+    --accent: #84cfa8;
+    --accent-ink: #0d1512;
+    --err: #f0928c;
+    --warn: #e0b45c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #101614;
+  --panel: #18211d;
+  --ink: #dfe8e3;
+  --muted: #93a39b;
+  --rule: #2b3832;
+  --accent: #84cfa8;
+  --accent-ink: #0d1512;
+  --err: #f0928c;
+  --warn: #e0b45c;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-padding-top: 4.5rem; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 1rem/1.6 var(--body);
+}
+a { color: var(--accent); text-underline-offset: 0.18em; }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+.top {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule);
+}
+.top-inner {
+  max-width: 62rem; margin: 0 auto; padding: 0.6rem 1.25rem;
+  display: flex; align-items: center; gap: 0.5rem 1.5rem; flex-wrap: wrap;
+}
+.brand {
+  display: inline-flex; align-items: center; gap: 0.55rem;
+  font: 500 1rem/1 var(--mono); color: var(--ink); text-decoration: none;
+}
+.brand svg { display: block; }
+.brand rect { fill: var(--accent); }
+nav { display: flex; gap: 0.15rem 1.1rem; flex-wrap: wrap; font-size: 0.92rem; }
+nav a { color: var(--muted); text-decoration: none; padding: 0.2rem 0; border-bottom: 2px solid transparent; }
+nav a:hover { color: var(--ink); }
+nav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
+
+main { max-width: 62rem; margin: 0 auto; padding: 0 1.25rem 4rem; }
+.page { display: none; }
+.page.active { display: block; }
+
+/* Landing */
+.hero { padding: 3.5rem 0 2rem; max-width: 50rem; }
+.stanza {
+  margin: 0 0 1.75rem;
+  font: italic 400 clamp(1.6rem, 4.6vw, 2.7rem)/1.22 var(--display);
+  letter-spacing: -0.01em;
+  display: grid; gap: 0.1em;
+}
+.stanza .line { display: grid; grid-template-columns: 2.2ch 1fr; column-gap: 0.9rem; align-items: baseline; }
+.stanza .no {
+  font: 400 0.8rem/1 var(--mono); font-style: normal; letter-spacing: 0;
+  color: var(--muted); text-align: right; font-variant-numeric: tabular-nums;
+}
+.lead { font-size: 1.12rem; color: var(--ink); margin: 0 0 1.5rem; max-width: 38rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0; }
+.button {
+  display: inline-block; padding: 0.55rem 1rem;
+  border: 1px solid var(--rule); border-radius: 4px;
+  color: var(--ink); text-decoration: none; font-weight: 500; font-size: 0.95rem;
+}
+.button:hover { border-color: var(--accent); }
+.button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.sample { max-width: var(--measure); }
+.features { max-width: var(--measure); margin-top: 2.5rem; }
+.features ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 0; }
+.features li { padding: 0.9rem 0; border-top: 1px solid var(--rule); }
+.features li:last-child { border-bottom: 1px solid var(--rule); }
+.features li strong { display: block; font-weight: 600; }
+
+/* Documents */
+.prose { max-width: var(--measure); }
+.page.prose { padding-top: 2.5rem; }
+.prose h1 { font: 600 1.9rem/1.2 var(--body); margin: 0 0 1rem; text-wrap: balance; letter-spacing: -0.01em; }
+.prose h2 { font: 600 1.3rem/1.3 var(--body); margin: 2.6rem 0 0.7rem; padding-top: 1.2rem; border-top: 1px solid var(--rule); text-wrap: balance; }
+.prose h3 { font: 600 1.05rem/1.35 var(--body); margin: 2rem 0 0.5rem; }
+.features h2 { border-top: 0; padding-top: 0; margin-top: 0; }
+.prose p, .prose ul, .prose ol { margin: 0 0 1rem; }
+.prose li { margin: 0.25rem 0; }
+.prose li > p { margin: 0 0 0.4rem; }
+.prose blockquote {
+  margin: 0 0 1.2rem; padding: 0.7rem 1rem;
+  border-left: 3px solid var(--accent); background: var(--panel);
+  color: var(--ink); font-size: 0.95rem;
+}
+.prose blockquote p:last-child { margin: 0; }
+code { font: 400 0.88em/1.5 var(--mono); background: var(--panel); padding: 0.08em 0.32em; border-radius: 3px; overflow-wrap: anywhere; }
+h1 code, h2 code, h3 code { font-weight: 500; }
+pre.code {
+  margin: 0 0 1.2rem; padding: 0.9rem 1rem;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 4px;
+  overflow-x: auto; font: 400 0.84rem/1.55 var(--mono); tab-size: 4;
+}
+pre.code code { background: none; padding: 0; font: inherit; overflow-wrap: normal; white-space: pre; }
+.t-com, .t-prompt { color: var(--muted); }
+.t-kw { color: var(--accent); font-weight: 500; }
+.t-spec { color: var(--warn); }
+.t-str { color: var(--ink); opacity: 0.82; }
+.t-err { color: var(--err); font-weight: 500; }
+.t-warn { color: var(--warn); font-weight: 500; }
+.t-help { color: var(--accent); }
+.table { overflow-x: auto; margin: 0 0 1.2rem; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: left; vertical-align: top; padding: 0.5rem 0.7rem 0.5rem 0; border-bottom: 1px solid var(--rule); }
+th { font-weight: 600; white-space: nowrap; }
+td:first-child { font-variant-numeric: tabular-nums; }
+.file { border-bottom: 1px dotted var(--muted); cursor: help; }
+.toc { margin: 0 0 1.5rem; font-size: 0.92rem; }
+.toc summary { cursor: pointer; color: var(--muted); width: fit-content; }
+.toc ol { margin: 0.6rem 0 0; padding: 0 0 0 1.2rem; columns: 16rem 2; column-gap: 2rem; }
+.toc li { margin: 0.15rem 0; break-inside: avoid; }
+.toc a { text-decoration: none; }
+.toc a:hover { text-decoration: underline; }
+.source { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.85rem; }
+
+footer { border-top: 1px solid var(--rule); }
+footer p { max-width: 62rem; margin: 0 auto; padding: 1.25rem; color: var(--muted); font-size: 0.85rem; }
+
+@media (max-width: 40rem) {
+  nav { flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; gap: 0 1.1rem; scrollbar-width: none; }
+  nav::-webkit-scrollbar { display: none; }
+}
+@media (max-width: 30rem) {
+  .hero { padding-top: 2.25rem; }
+  .stanza .line { grid-template-columns: 1.6ch 1fr; column-gap: 0.6rem; }
+  .top-inner { padding: 0.5rem 1rem; }
+  main { padding: 0 1rem 3rem; }
+}
+</style>
+<noscript><style>.page { display: block; margin-bottom: 4rem; }</style></noscript>
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <a class="brand" href="#home" aria-label="{{name}} home">
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="0" y="1" width="18" height="2.5"/><rect x="0" y="5.5" width="12" height="2.5"/><rect x="0" y="10" width="16" height="2.5"/><rect x="0" y="14.5" width="9" height="2.5"/></svg>
+      {{name}}
+    </a>
+    <nav aria-label="Pages">
+      {{nav}}
+    </nav>
+  </div>
+</header>
+<main>
+{{pages}}
+</main>
+<footer><p>{{footer}}</p></footer>
+<script>
+(function () {
+  var pages = Array.prototype.slice.call(document.querySelectorAll(".page"));
+  var links = Array.prototype.slice.call(document.querySelectorAll("nav a[data-page]"));
+  var base = document.title;
+
+  // The address holds a plain #name: a page, or a heading inside a page.
+  function show() {
+    var name = decodeURIComponent(location.hash.slice(1));
+    var target = name ? document.getElementById(name) : null;
+    var page = target ? target.closest(".page") : null;
+    if (!page) { page = document.getElementById("home"); target = null; }
+    pages.forEach(function (p) { p.classList.toggle("active", p === page); });
+    links.forEach(function (a) {
+      if (a.dataset.page === page.id) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    });
+    document.title = page.id === "home" ? base : page.dataset.title + " · " + base.split(":")[0];
+    if (target && target !== page) target.scrollIntoView();
+    else window.scrollTo(0, 0);
+  }
+  window.addEventListener("hashchange", show);
+  show();
+})();
+</script>
+</body>
+</html>

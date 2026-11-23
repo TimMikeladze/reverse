@@ -1,0 +1,59 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - name: Mutation robustness (longer run)
+        run: cargo test --release -p reverse-cli --test robustness
+        env:
+          REVERSE_FUZZ_ROUNDS: "500"
+      - name: Eval reference solutions
+        if: runner.os != 'Windows'
+        run: |
+          cargo build --release
+          mkdir -p /tmp/refs
+          for d in evals/tasks/*/; do cp "$d/reference.verse" "/tmp/refs/$(basename "$d").verse"; done
+          python3 evals/score.py /tmp/refs
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: scripts/build-wasm.sh
+      - run: node playground/test-wasm.mjs playground/dist/reverse.wasm
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build
+      - name: Generated reference pages are up to date
+        run: |
+          python3 scripts/gen-docs.py
+          git diff --exit-code docs
+      - name: Build the site
+        run: |
+          pip install markdown
+          python3 site/build.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: site/dist

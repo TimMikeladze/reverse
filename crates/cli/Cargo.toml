@@ -1,0 +1,16 @@
+[package]
+name = "reverse-cli"
+description = "Command line and MCP server for the reverse Verse toolchain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "reverse"
+path = "src/main.rs"
+
+[dependencies]
+reverse-syntax = { path = "../syntax" }
+reverse-check = { path = "../check" }
+reverse-vm = { path = "../vm" }
+serde_json = "1"

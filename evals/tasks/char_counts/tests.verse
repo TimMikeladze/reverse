@@ -1,0 +1,11 @@
+TestCharCounts()<decides><transacts> : void =
+    M := CharCounts("banana")
+    M.Length = 3
+    M['b'] = 1
+    M['a'] = 3
+    M['n'] = 2
+TestCharCountsOrder()<decides><transacts> : void =
+    Keys := for (K -> V : CharCounts("abcab")) { K }
+    Keys = array{'a', 'b', 'c'}
+TestCharCountsEmpty()<decides><transacts> : void =
+    CharCounts("").Length = 0

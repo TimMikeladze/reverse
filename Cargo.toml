@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/syntax", "crates/check", "crates/vm", "crates/cli", "crates/wasm"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://example.invalid/reverse"
+
+[profile.release]
+opt-level = 2
+
+# The WebAssembly build: small, and a panic traps instead of unwinding.
+[profile.wasm]
+inherits = "release"
+opt-level = "s"
+lto = true
+panic = "abort"
+codegen-units = 1
