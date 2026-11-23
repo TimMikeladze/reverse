@@ -11,14 +11,25 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Rust with the WebAssembly target. Vercel's build image has no Rust, so
-# install a minimal toolchain there; locally, use the one already present.
-if ! command -v cargo >/dev/null 2>&1; then
-    if [ ! -x "$HOME/.cargo/bin/cargo" ]; then
+world=examples/bevy-world
+minimum_rust=$(awk -F '"' '/^rust-version = / { print $2; exit }' "$world/Cargo.toml")
+current_rust=$(rustc --version 2>/dev/null | awk '{ print $2 }' || true)
+if ! awk -v current="$current_rust" -v minimum="$minimum_rust" 'BEGIN {
+    split(current, installed, "."); split(minimum, required, ".");
+    for (i = 1; i <= 3; i++) {
+        if (installed[i] + 0 != required[i] + 0) exit !(installed[i] + 0 > required[i] + 0);
+    }
+}'; then
+    cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+    if ! command -v rustup >/dev/null 2>&1 && [ ! -x "$cargo_bin/rustup" ]; then
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
-            sh -s -- -y --profile minimal --default-toolchain stable --target wasm32-unknown-unknown
+            sh -s -- -y --profile minimal --default-toolchain none
     fi
-    export PATH="$HOME/.cargo/bin:$PATH"
+    export PATH="$cargo_bin:$PATH"
+    rustup toolchain install "$minimum_rust" --profile minimal --target wasm32-unknown-unknown
+    export RUSTUP_TOOLCHAIN="$minimum_rust"
+    toolchain_bin=$(dirname "$(rustup which --toolchain "$minimum_rust" cargo)")
+    export PATH="$toolchain_bin:$PATH"
 fi
 if command -v rustup >/dev/null 2>&1; then
     rustup target add wasm32-unknown-unknown >/dev/null 2>&1 ||
@@ -34,7 +45,6 @@ fi
 
 scripts/build-wasm.sh
 
-world=examples/bevy-world
 bindgen_version=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/"/, "", $3); print $3; exit }' "$world/Cargo.lock")
 bindgen_cli=${WASM_BINDGEN:-wasm-bindgen}
 if [ "$("$bindgen_cli" --version 2>/dev/null || true)" != "wasm-bindgen $bindgen_version" ]; then
